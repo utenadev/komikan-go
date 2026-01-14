@@ -11,6 +11,7 @@ import (
 
 	"github.com/kench/komikan-go/internal/config"
 	"github.com/kench/komikan-go/internal/db"
+	"github.com/kench/komikan-go/internal/manga"
 	"github.com/kench/komikan-go/internal/nostr"
 )
 
@@ -84,7 +85,6 @@ func main() {
 
 	log.Println("Bot is running. Press Ctrl+C to stop.")
 
-	// TODO: Start background tasks for checking new releases
 	// Start periodic checks if enabled
 	if cfg.Bot.AnnounceNewReleases {
 		go runPeriodicChecks(client, database, cfg)
@@ -108,14 +108,54 @@ func runPeriodicChecks(client *nostr.Client, database *db.DB, cfg *config.Config
 		interval = time.Hour
 	}
 
+	// Initial check on startup
+	checkAndAnnounceNewReleases(client, database, cfg.Rakuten.ApplicationID)
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		log.Println("Checking for new releases...")
-		// TODO: Implement new release checking
-		// 1. Query Rakuten API for registered manga
-		// 2. Compare with local database
-		// 3. Publish notifications for new releases
+		checkAndAnnounceNewReleases(client, database, cfg.Rakuten.ApplicationID)
 	}
+}
+
+func checkAndAnnounceNewReleases(client *nostr.Client, database *db.DB, rakutenAPIKey string) {
+	log.Println("Checking for new releases...")
+
+	mgr := manga.NewManager(database)
+	newReleases, err := mgr.CheckNewReleases(rakutenAPIKey)
+	if err != nil {
+		log.Printf("Failed to check for new releases: %v", err)
+		return
+	}
+
+	if len(newReleases) == 0 {
+		log.Println("No new releases found.")
+		return
+	}
+
+	log.Printf("Found %d new release(s)!", len(newReleases))
+
+	// Announce each new release
+	for _, release := range newReleases {
+		message := formatNewReleaseMessage(release)
+		if err := client.Publish(message); err != nil {
+			log.Printf("Failed to publish announcement: %v", err)
+		} else {
+			log.Printf("Announced: %s Vol.%d", release.SeriesTitle, release.NewVolume)
+		}
+	}
+}
+
+func formatNewReleaseMessage(release manga.NewReleaseCheckResult) string {
+	return fmt.Sprintf("📖 新刊情報！\n\n"+
+		"%s Vol.%d が発売予定です！\n"+
+		"📅 発売日: %s\n"+
+		"👨‍🎨 作者: %s\n"+
+		"🔗 %s",
+		release.SeriesTitle,
+		release.NewVolume,
+		release.SalesDate,
+		release.Author,
+		release.URL)
 }
