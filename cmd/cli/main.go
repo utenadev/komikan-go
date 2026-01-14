@@ -13,10 +13,11 @@ import (
 
 func main() {
 	var (
-		isbn   = flag.String("isbn", "", "ISBN code to add")
-		list   = flag.Bool("list", false, "List all manga")
-		dbPath = flag.String("db", "data/komikan.db", "Database path")
-		appID  = flag.String("app-id", "", "Rakuten Application ID (or set RAKUTEN_APP_ID env var)")
+		isbn    = flag.String("isbn", "", "ISBN code to add")
+		list    = flag.Bool("list", false, "List all manga")
+		latest  = flag.String("latest", "", "Check latest volume for a title")
+		dbPath  = flag.String("db", "data/komikan.db", "Database path")
+		appID   = flag.String("app-id", "", "Rakuten Application ID (or set RAKUTEN_APP_ID env var)")
 	)
 
 	flag.Parse()
@@ -54,6 +55,57 @@ func main() {
 		return
 	}
 
+	if *latest != "" {
+		// Get Rakuten App ID
+		appID := getRakutenAppID(*appID)
+		if appID == "" {
+			log.Fatal("Rakuten Application ID is required. Use -app-id flag or set RAKUTEN_APP_ID env var")
+		}
+
+		// Check latest volume
+		fmt.Printf("Checking latest volume for: %s\n", *latest)
+
+		client := api.NewRakutenClient(appID)
+		books, err := client.SearchByTitleSorted(*latest, "-releaseDate", 30)
+		if err != nil {
+			log.Fatalf("Failed to search: %v", err)
+		}
+
+		if len(books) == 0 {
+			fmt.Println("No results found.")
+			return
+		}
+
+		// Find latest numbered volume
+		var latestVolume int
+		var latestBook *api.BookInfo
+		for _, book := range books {
+			info := manga.ExtractVolumeInfo(book.Title)
+			if info.HasVolume && info.Volume > latestVolume {
+				latestVolume = info.Volume
+				latestBook = &book
+			}
+		}
+
+		if latestBook != nil {
+			info := manga.ExtractVolumeInfo(latestBook.Title)
+			fmt.Printf("\n📚 Latest Volume Found:\n")
+			fmt.Printf("  Title: %s\n", latestBook.Title)
+			fmt.Printf("  Volume: %d\n", info.Volume)
+			fmt.Printf("  Author: %s\n", latestBook.Author)
+			fmt.Printf("  Publisher: %s\n", latestBook.Publisher)
+			fmt.Printf("  ISBN: %s\n", latestBook.Isbn)
+			fmt.Printf("  Release Date: %s\n", latestBook.SalesDate)
+			fmt.Printf("  URL: %s\n", latestBook.ItemURL)
+		} else {
+			fmt.Println("No numbered volumes found.")
+		}
+
+		// Show total count
+		fmt.Printf("\nFound %d total results for \"%s\"\n", len(books), *latest)
+		return
+	}
+
 	if *isbn != "" {
 		// Get Rakuten App ID
 		appID := getRakutenAppID(*appID)
@@ -81,6 +133,13 @@ func main() {
 			URL:         book.ItemURL,
 		}
 
+		// Extract volume info
+		volInfo := manga.ExtractVolumeInfo(book.Title)
+		if volInfo.HasVolume {
+			m.Volume = volInfo.Volume
+			m.Series = volInfo.Title
+		}
+
 		if err := mgr.Add(m); err != nil {
 			log.Fatalf("Failed to add manga: %v", err)
 		}
@@ -96,6 +155,7 @@ func main() {
 	fmt.Println("\nExamples:")
 	fmt.Println("  komikan-cli -isbn 9784088818791")
 	fmt.Println("  komikan-cli -list")
+	fmt.Println("  komikan-cli -latest ダンダダン")
 	fmt.Println("\nEnvironment Variables:")
 	fmt.Println("  RAKUTEN_APP_ID  Rakuten Application ID")
 	os.Exit(1)
