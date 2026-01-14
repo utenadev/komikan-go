@@ -1,0 +1,25 @@
+# Nostr Settings
+nostr:
+  # Your Nostr secret key (nsec形式 or hex)
+  secret_key: "nsec..."
+  # Relay URLs
+  relays:
+    - "wss://relay.damus.io"
+    - "wss://nos.lol"
+    - "wss://relay-jp.nostr.wirednet.jp"
+
+# Rakuten Books API
+rakuten:
+  application_id: "your_app_id_here"
+  # Get from: https://webservice.rakuten.co.jp/
+
+# Database
+database:
+  path: "data/komikan.db"
+
+# Bot Settings
+bot:
+  # Check interval for new releases
+  check_interval: "1h"
+  # Notification settings
+  announce_new_releases: true
