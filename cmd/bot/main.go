@@ -1,34 +1,94 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/kench/komikan-go/internal/config"
+	"github.com/kench/komikan-go/internal/db"
 	"github.com/kench/komikan-go/internal/nostr"
 )
 
+var (
+	version = "dev"
+)
+
 func main() {
-	log.Println("Starting Komikan Bot...")
+	configFile := flag.String("config", "config.yaml", "Configuration file path")
+	printVersion := flag.Bool("version", false, "Print version and exit")
+	flag.Parse()
 
-	// TODO: Load config
-	// TODO: Initialize database
-	// TODO: Initialize Nostr client
+	if *printVersion {
+		fmt.Printf("komikan-bot v%s\n", version)
+		os.Exit(0)
+	}
 
-	// Start Nostr client
-	client, err := nostr.NewClient()
+	log.Printf("Starting Komikan Bot v%s...", version)
+
+	// Load configuration
+	cfg, err := config.Load(*configFile)
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Override with environment variables
+	cfg.LoadFromEnv()
+
+	// Validate configuration
+	if cfg.Nostr.SecretKey == "" {
+		log.Fatal("Nostr secret key is required. Set it in config.yaml or NOSTR_SECRET_KEY env var")
+	}
+	if cfg.Rakuten.ApplicationID == "" {
+		log.Fatal("Rakuten Application ID is required. Set it in config.yaml or RAKUTEN_APP_ID env var")
+	}
+
+	// Initialize database
+	database, err := db.NewDB(db.Config{Path: cfg.Database.Path})
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer database.Close()
+
+	// Initialize Nostr client
+	client, err := nostr.NewClient(nostr.Config{
+		SecretKey: cfg.Nostr.SecretKey,
+		Relays:    cfg.Nostr.Relays,
+	})
 	if err != nil {
 		log.Fatalf("Failed to create Nostr client: %v", err)
 	}
 
 	// Connect to relays
+	log.Println("Connecting to Nostr relays...")
 	if err := client.Connect(); err != nil {
 		log.Fatalf("Failed to connect to relays: %v", err)
 	}
 
-	log.Println("Connected to Nostr relays")
+	// Get and display public key
+	npub, err := client.GetPublicKey()
+	if err != nil {
+		log.Printf("Warning: failed to get public key: %v", err)
+	} else {
+		log.Printf("Bot public key: %s", npub)
+	}
+
+	// Post startup announcement
+	if err := client.Publish("📚 Komikan Bot is now running!"); err != nil {
+		log.Printf("Warning: failed to publish startup message: %v", err)
+	}
+
+	log.Println("Bot is running. Press Ctrl+C to stop.")
+
+	// TODO: Start background tasks for checking new releases
+	// Start periodic checks if enabled
+	if cfg.Bot.AnnounceNewReleases {
+		go runPeriodicChecks(client, database, cfg)
+	}
 
 	// Wait for interrupt signal
 	sigChan := make(chan os.Signal, 1)
@@ -38,4 +98,24 @@ func main() {
 	log.Println("Shutting down...")
 	client.Disconnect()
 	fmt.Println("Bye!")
+}
+
+func runPeriodicChecks(client *nostr.Client, database *db.DB, cfg *config.Config) {
+	// Parse check interval
+	interval, err := time.ParseDuration(cfg.Bot.CheckInterval)
+	if err != nil {
+		log.Printf("Invalid check interval: %v, using 1 hour", err)
+		interval = time.Hour
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		log.Println("Checking for new releases...")
+		// TODO: Implement new release checking
+		// 1. Query Rakuten API for registered manga
+		// 2. Compare with local database
+		// 3. Publish notifications for new releases
+	}
 }

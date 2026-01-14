@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/kench/komikan-go/internal/api"
+	"github.com/kench/komikan-go/internal/db"
 	"github.com/kench/komikan-go/internal/manga"
 )
 
@@ -14,11 +15,20 @@ func main() {
 	var (
 		isbn   = flag.String("isbn", "", "ISBN code to add")
 		list   = flag.Bool("list", false, "List all manga")
+		dbPath = flag.String("db", "data/komikan.db", "Database path")
+		appID  = flag.String("app-id", "", "Rakuten Application ID (or set RAKUTEN_APP_ID env var)")
 	)
 
 	flag.Parse()
 
-	mgr := manga.NewManager()
+	// Initialize database
+	database, err := db.NewDB(db.Config{Path: *dbPath})
+	if err != nil {
+		log.Fatalf("Failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	mgr := manga.NewManager(database)
 
 	if *list {
 		// List all manga
@@ -35,17 +45,26 @@ func main() {
 		fmt.Println("Registered Manga:")
 		fmt.Println("==================")
 		for _, b := range books {
-			fmt.Printf("- %s Vol.%d (%s) - %s\n", b.Title, b.Volume, b.Author, b.ISBN)
+			if b.Series != "" {
+				fmt.Printf("- %s Vol.%d [%s] (%s) - %s\n", b.Title, b.Volume, b.Series, b.Author, b.ISBN)
+			} else {
+				fmt.Printf("- %s (%s) - %s\n", b.Title, b.Author, b.ISBN)
+			}
 		}
 		return
 	}
 
 	if *isbn != "" {
+		// Get Rakuten App ID
+		appID := getRakutenAppID(*appID)
+		if appID == "" {
+			log.Fatal("Rakuten Application ID is required. Use -app-id flag or set RAKUTEN_APP_ID env var")
+		}
+
 		// Add manga by ISBN
 		fmt.Printf("Looking up ISBN: %s\n", *isbn)
 
-		// TODO: Load app ID from config
-		client := api.NewRakutenClient("YOUR_APP_ID_HERE")
+		client := api.NewRakutenClient(appID)
 
 		book, err := client.SearchByISBN(*isbn)
 		if err != nil {
@@ -77,5 +96,14 @@ func main() {
 	fmt.Println("\nExamples:")
 	fmt.Println("  komikan-cli -isbn 9784088818791")
 	fmt.Println("  komikan-cli -list")
+	fmt.Println("\nEnvironment Variables:")
+	fmt.Println("  RAKUTEN_APP_ID  Rakuten Application ID")
 	os.Exit(1)
+}
+
+func getRakutenAppID(fromFlag string) string {
+	if fromFlag != "" {
+		return fromFlag
+	}
+	return os.Getenv("RAKUTEN_APP_ID")
 }
